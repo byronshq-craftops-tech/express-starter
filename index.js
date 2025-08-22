@@ -1,10 +1,18 @@
 require("dotenv").config();
 const express = require("express");
 const app = express();
-const port = process.env.PORT || 3000;
+app.use(express.json()); // parse JSON request bodies
+const morgan = require("morgan");
+app.use(morgan("dev"));
+const port = Number(process.env.PORT || 3000);
 // NEW: Postgres client (pg)
 const { Pool } = require("pg");
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+if (!process.env.DATABASE_URL) {
+  console.warn(
+    "DATABASE_URL missing — /db and /notes will return 500 until set"
+  );
+}
 
 // NEW: Redis client
 const Redis = require("ioredis");
@@ -84,6 +92,40 @@ app.get("/cache", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// POST /notes — create a note from JSON body { "txt": "..." }
+app.post("/notes", async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const txt = typeof body.txt === "string" ? body.txt.trim() : "";
+    if (!txt) {
+      return res
+        .status(400)
+        .json({ error: 'Provide JSON like: { "txt": "Hello" }' });
+    }
+
+    const r = await pool.query(
+      "INSERT INTO notes (txt) VALUES ($1) RETURNING *",
+      [txt]
+    );
+    res.status(201).json(r.rows[0]);
+  } catch (e) {
+    next(e);
+  }
+});
+
+// 404 for unknown routes (keep this BEFORE the error handler)
+app.use((req, res) => {
+  res.status(404).json({ error: "Not found" });
+});
+
+// Central error handler (last middleware)
+app.use((err, req, res, next) => {
+  console.error(err); // keep for debugging
+  res
+    .status(err.status || 500)
+    .json({ error: err.message || "Internal Server Error" });
 });
 
 app.listen(port, () => {
